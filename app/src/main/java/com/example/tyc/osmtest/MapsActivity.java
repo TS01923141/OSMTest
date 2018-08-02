@@ -2,6 +2,7 @@ package com.example.tyc.osmtest;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.drawable.Drawable;
@@ -26,13 +27,18 @@ import android.view.View;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.example.tyc.osmtest.utils.OfflineTileProvider;
 import com.example.tyc.osmtest.utils.MyLocationOverlay;
+import com.example.tyc.osmtest.utils.OnlineTileProvider;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.MarkerOptions;
+import com.google.android.gms.maps.model.TileOverlay;
+import com.google.android.gms.maps.model.TileOverlayOptions;
+import com.google.android.gms.maps.model.TileProvider;
 
 import org.mapsforge.core.graphics.Paint;
 import org.mapsforge.core.graphics.Style;
@@ -77,10 +83,15 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private static final String TAG = "MapsActivity";
 
     private static final String MAP_FILE = "MOI_OSM_Taiwan_TOPO_Rudy.map";
-    private static final int GOOGLE_MAP = 0;
-    private static final int OPEN_STREET_MAP = 1;
+    public static final int GOOGLE_MAP = 0;
+    public static final int OPEN_STREET_MAP = 1;
     private static final int MAPSFORGE = 2;
+    public static final int RUDY_MAP = 3;
+    public static final int WMTS_MAP = 4;
+    private static boolean moveToMyLocation = true;
+    private boolean chooseOfflineMapRegion = false;
 
+    private SupportMapFragment mapFragment;
     private Location currentLocation;
     private int currentMap = GOOGLE_MAP;
     private LocationManager locationManager;
@@ -90,10 +101,14 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private ConstraintLayout googleMapFrame;
     private MapView osmMap = null;
     private org.mapsforge.map.android.view.MapView mapsforgeMapView = null;
+    private TileCache tileCache;
     private MyLocationNewOverlay mLocationOverlay;
     private RotationGestureOverlay mRotationGestureOverlay;
     private static final int RequestPermissionCode = 1;
-    private FloatingActionButton fabSwitchMap, fabMyLocation;
+    private FloatingActionButton fabSwitchMap, fabMyLocation, fabCloseMap, fabAddMarker, fabDownloadOfflineMap;
+    private org.mapsforge.core.graphics.Bitmap mapsforgeBitmap;
+    private TileProvider tileProvider;
+    private TileOverlay offlineOverlay;
 
     private static Paint getPaint(int color, int strokeWidth, Style style) {
         Paint paint = AndroidGraphicFactory.INSTANCE.createPaint();
@@ -112,24 +127,28 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         AndroidGraphicFactory.createInstance(getApplication());
         setContentView(R.layout.activity_maps);
         checkPermissions();
-        //mapsforge
+//        tileProvider.getTile(95, 55, 7);
+        //get my location
         this.locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         //init Views
         googleMapFrame = findViewById(R.id.google_map_frame);
+        fabCloseMap = findViewById(R.id.fab_closeMap);
         fabSwitchMap = findViewById(R.id.fab_switchMap);
         fabMyLocation = findViewById(R.id.fab_myLocation);
+        fabAddMarker = findViewById(R.id.fab_addMarker);
+        fabDownloadOfflineMap = findViewById(R.id.fab_downloadOfflineMap);
         fabMyLocation.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                if (Objects.equals(currentLocation,null)){
+                if (Objects.equals(currentLocation, null)) {
                     return;
                 }
-                switch (currentMap){
+                switch (currentMap) {
                     case GOOGLE_MAP:
                         mMap.moveCamera(CameraUpdateFactory.newLatLng(
                                 new LatLng(
-                                currentLocation.getLatitude(),
-                                currentLocation.getLongitude()
+                                        currentLocation.getLatitude(),
+                                        currentLocation.getLongitude()
                                 )
                         ));
                         mMap.animateCamera(CameraUpdateFactory.zoomTo(16.0f));
@@ -155,13 +174,65 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
                 initChooseMapDialog().show();
             }
         });
+        fabCloseMap.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                clearMap();
+            }
+        });
+        fabAddMarker.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                addMarker();
+            }
+        });
+        fabDownloadOfflineMap.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                //先下載一張並且讀取
+                //設定範圍下載並讀取->計算各邊界的圖磚數字, 中間的全部下載
+                //讓使用者選範圍並下載讀取
+                //切換地圖可選範圍並下載讀取
+
+//                Completable.fromAction(new Action() {
+//                    @Override
+//                    public void run() throws Exception {
+////                        GoogleMapOfflineFileController.saveTileFile("TEST_MAP", GoogleMapOfflineFileController.getTileX(currentLocation.getLongitude(), 16), GoogleMapOfflineFileController.getTileY(currentLocation.getLatitude(), 16), 16);
+//                        List<LatLng> latLngs = new ArrayList<>();
+//                        latLngs.add(new LatLng(25.028155, 121.528526));
+//                        latLngs.add(new LatLng(25.024927, 121.534405));
+//                        List<Integer> zoomList = new ArrayList<>();
+//                        zoomList.add(16);
+//                        zoomList.add(17);
+//                        GoogleMapOfflineFileController.saveTileRegionFile("TEST_MAP", GoogleMapOfflineFileController.getTileRegion(latLngs, zoomList));
+//                    }
+//                }).subscribeOn(Schedulers.newThread())
+//                        .observeOn(AndroidSchedulers.mainThread())
+//                        .andThen(Completable.fromAction(new Action() {
+//                            @Override
+//                            public void run() throws Exception {
+//                                GoogleMapOfflineTileProvider tileProvider = new GoogleMapOfflineTileProvider("TEST_MAP");
+//                                TileOverlay offlineOverlay = mMap.addTileOverlay(new TileOverlayOptions().tileProvider(tileProvider).zIndex(0));
+//                            }
+//                        }))
+//                        .subscribe();
+
+//                Toast.makeText(MapsActivity.this, "請選擇離線地圖範圍", Toast.LENGTH_SHORT).show();
+//                startActivityForResult(new Intent(MapsActivity.this, ChooseOfflineMapRegionActivity.class), 1111);
+
+                Intent intent = new Intent(MapsActivity.this, OfflineMapActivity.class);
+                startActivityForResult(intent, 1234);
+            }
+        });
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        osmMap.onResume();
-        //mapsforge
+        if (!Objects.equals(osmMap, null)) {
+            osmMap.onResume();
+        }
+        //get my location
         enableAvailableProviders();
     }
 
@@ -170,7 +241,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         //mapsforge
         this.locationManager.removeUpdates(this);
         super.onPause();
-        osmMap.onPause();
+        if (!Objects.equals(osmMap, null)) {
+            osmMap.onPause();
+        }
     }
 
     @Override
@@ -180,7 +253,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         super.onDestroy();
     }
 
-    private void initMapsforge(){
+    private void initMapsforge() {
         Log.d(TAG, "initMapsforge: ");
 //        mapsforgeMapView = new org.mapsforge.map.android.view.MapView(this);
         mapsforgeMapView = findViewById(R.id.mapsforge_map);
@@ -190,8 +263,8 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             mapsforgeMapView.getMapScaleBar().setVisible(true);
             mapsforgeMapView.setBuiltInZoomControls(true);
 
-            TileCache tileCache = AndroidUtil.createTileCache(this, "mapcache",
-                    mapsforgeMapView.getModel().displayModel.getTileSize(), 1f,
+            tileCache = AndroidUtil.createTileCache(this, "mapcache",
+                    mapsforgeMapView.getModel().displayModel.getTileSize(), 10f,
                     mapsforgeMapView.getModel().frameBufferModel.getOverdrawFactor());
 
 //            File directory = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
@@ -205,7 +278,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             mapsforgeMapView.getLayerManager().getLayers().add(tileRendererLayer);
 
             mapsforgeMapView.setCenter(new LatLong(25.026231, 121.531847));
-            mapsforgeMapView.setZoomLevel((byte)   16);
+            mapsforgeMapView.setZoomLevel((byte) 16);
 
             //init MyLocation resource
             Drawable myLocationIcon = ContextCompat.getDrawable(MapsActivity.this, R.drawable.ic_my_location_black_24dp);
@@ -213,7 +286,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             Marker myLocationMarker = new Marker(null, AndroidGraphicFactory.convertToBitmap(myLocationIcon), 0, 0);
             // circle to show the location accuracy (optional)
             Circle circle = new Circle(null, 0,
-                    getPaint(AndroidGraphicFactory.INSTANCE.createColor(48,0,0,255), 0, Style.FILL),
+                    getPaint(AndroidGraphicFactory.INSTANCE.createColor(48, 0, 0, 255), 0, Style.FILL),
                     getPaint(AndroidGraphicFactory.INSTANCE.createColor(160, 0, 0, 255), 2, Style.STROKE));
             //create MyLocation marker
             myLocationOverlay = new MyLocationOverlay(myLocationMarker, circle);
@@ -223,9 +296,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             //create marker
             Drawable icon = ContextCompat.getDrawable(MapsActivity.this, R.drawable.ic_location_black_24dp);
             DrawableCompat.setTint(icon, ContextCompat.getColor(this, android.R.color.holo_red_dark));
-            org.mapsforge.core.graphics.Bitmap bitmap= AndroidGraphicFactory.convertToBitmap(icon);
+            org.mapsforge.core.graphics.Bitmap bitmap = AndroidGraphicFactory.convertToBitmap(icon);
             bitmap.incrementRefCount();
-            Marker marker = new Marker(new LatLong(25.026231, 121.531847), bitmap, 0 , -bitmap.getHeight() / 2){
+            Marker marker = new Marker(new LatLong(25.026231, 121.531847), bitmap, 0, -bitmap.getHeight() / 2) {
                 @Override
                 public boolean onTap(LatLong geoPoint, Point viewPosition, Point tapPoint) {
                     if (contains(viewPosition, tapPoint)) {
@@ -260,7 +333,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
 //            mapsforgeMapView.getLayerManager().getLayers().
 
-        }catch (Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
@@ -268,13 +341,18 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     private void initGoogleMap() {
         //initGoogleMap google map
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
-        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
+        mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
     }
-    private void initOsmMap(){
-        //initGoogleMap osm map
+
+    private void initOsmMap() {
+        //init osm map
         osmMap = (MapView) findViewById(R.id.osm_map);
+//        MapTileProviderBasic tileProvider = new MapTileProviderBasic(getApplicationContext());
+//        ITileSource tileSource = new GoogleMapTileSource("TEST", 2, 19, 256, ".png",
+//                new String[]{"http://mt1.google.com/vt/lyrs=m"});
+//        osmMap.setTileSource(tileSource);
         osmMap.setTileSource(TileSourceFactory.MAPNIK);
         osmMap.setBuiltInZoomControls(true);
         osmMap.setMultiTouchControls(true);
@@ -286,7 +364,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         //initGoogleMap mark image
 
         //add mark
-        addMarker();
+        addOsmMarker();
         //add myLocation mark
         this.mLocationOverlay = new MyLocationNewOverlay(new GpsMyLocationProvider(this), osmMap);
         this.mLocationOverlay.enableMyLocation();
@@ -297,6 +375,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         geoPoints.add(new GeoPoint(25.027316, 121.522310));
         geoPoints.add(new GeoPoint(25.026763, 121.518977));
         drawPolyLine(geoPoints);
+
         osmMap.removeAllViews();
 //        //enable the Grid line Overlay
 //        LatLonGridlineOverlay2 overlay = new LatLonGridlineOverlay2();
@@ -307,7 +386,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 //        osmMap.setMultiTouchControls(true);
 //        osmMap.getOverlays().add(this.mRotationGestureOverlay);
     }
-
 
     /**
      * Manipulates the map once available.
@@ -327,9 +405,9 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
         // Add a marker in Sydney and move the camera
         LatLng sydney = new LatLng(-34, 151);
-//        mMap.addMarker(new MarkerOptions().position(sydney).title("Marker in Sydney"));
+//        mMap.addOsmMarker(new MarkerOptions().position(sydney).title("Marker in Sydney"));
 //        mMap.moveCamera(CameraUpdateFactory.newLatLng(sydney));
-        if (!Objects.equals(currentLocation,null)){
+        if (!Objects.equals(currentLocation, null)) {
             mMap.moveCamera(CameraUpdateFactory.newLatLng(
                     new LatLng(
                             currentLocation.getLatitude(),
@@ -338,9 +416,13 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             ));
         }
         mMap.animateCamera(CameraUpdateFactory.zoomTo(16.0f));
+
+//        GoogleMapOfflineTileProvider1 googleMapOfflineTileProvider1 = new GoogleMapOfflineTileProvider1();
+//        TileOverlay offlineOverlay = mMap.addTileOverlay(new TileOverlayOptions().tileProvider(googleMapOfflineTileProvider1).zIndex(0));
     }
 
-    private void addMarker() {
+
+    private void addOsmMarker() {
         //your items
         ArrayList<OverlayItem> items = new ArrayList<OverlayItem>();
         items.add(new OverlayItem("Title", "Description", new GeoPoint(25.026231d, 121.531847d))); // Lat/Lon decimal degrees
@@ -389,7 +471,6 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         osmMap.getOverlayManager().add(line);
     }
 
-
     private void checkPermissions() {
         if (Build.VERSION.SDK_INT >= 23) {
             if (!checkAllPermission()) {
@@ -401,6 +482,7 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
             }
         }
     }
+
 
     private void requestPermission() {
         ActivityCompat.requestPermissions(this, new String[]
@@ -473,37 +555,42 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
 
     @Override
     public void onLocationChanged(Location location) {
-        if (Objects.equals(location,null)){
+        if (Objects.equals(location, null)) {
             return;
         }
         currentLocation = location;
+
+//        Log.d(TAG, "onLocationChanged: getTileX: " + GoogleMapOfflineFileController.getTileX(location.getLongitude(), 16));
+//        Log.d(TAG, "onLocationChanged: getTileY: " + GoogleMapOfflineFileController.getTileY(location.getLatitude(), 16));
         this.myLocationOverlay.setPosition(location.getLatitude(), location.getLongitude(), location.getAccuracy());
+        if (moveToMyLocation) {
+            moveToMyLocation = false;
+            switch (currentMap) {
+                case GOOGLE_MAP:
+                    //googleMap
+                    if (!Objects.equals(mMap, null)) {
+                        mMap.moveCamera(CameraUpdateFactory.newLatLng(
+                                new LatLng(
+                                        currentLocation.getLatitude(),
+                                        currentLocation.getLongitude()
+                                )
+                        ));
+                        mMap.animateCamera(CameraUpdateFactory.zoomTo(16.0f));
+                    }
+                    break;
 
-        switch (currentMap) {
-            case GOOGLE_MAP:
-            //googleMap
-            if (!Objects.equals(mMap, null)) {
-                mMap.moveCamera(CameraUpdateFactory.newLatLng(
-                        new LatLng(
-                                currentLocation.getLatitude(),
-                                currentLocation.getLongitude()
-                        )
-                ));
-                mMap.animateCamera(CameraUpdateFactory.zoomTo(16.0f));
+                case OPEN_STREET_MAP:
+                    osmMap.getController().animateTo(new GeoPoint(
+                            currentLocation.getLatitude(),
+                            currentLocation.getLongitude()
+                    ));
+                    break;
+
+                case MAPSFORGE:
+                    // Follow location
+                    this.mapsforgeMapView.setCenter(new LatLong(location.getLatitude(), location.getLongitude()));
+                    break;
             }
-            break;
-
-            case OPEN_STREET_MAP:
-                osmMap.getController().animateTo(new GeoPoint(
-                        currentLocation.getLatitude(),
-                        currentLocation.getLongitude()
-                ));
-            break;
-
-            case MAPSFORGE:
-            // Follow location
-            this.mapsforgeMapView.setCenter(new LatLong(location.getLatitude(), location.getLongitude()));
-            break;
         }
     }
 
@@ -534,11 +621,13 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         }
     }
 
-    private AlertDialog initChooseMapDialog(){
+    private AlertDialog initChooseMapDialog() {
         View view = LayoutInflater.from(MapsActivity.this).inflate(R.layout.dialog_switch_map, null);
         TextView textView_googleMap = view.findViewById(R.id.textView_googleMap);
         TextView textView_OSM = view.findViewById(R.id.textView_OSM);
         TextView textView_mapsforge = view.findViewById(R.id.textView_mapsforge);
+        TextView textView_rudy = view.findViewById(R.id.textView_rudy);
+        TextView textView_wmts = view.findViewById(R.id.textView_wmts);
 
         final AlertDialog alertDialog = new AlertDialog.Builder(MapsActivity.this)
                 .setTitle("選擇地圖")
@@ -548,9 +637,14 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         textView_googleMap.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (Objects.equals(currentMap, GOOGLE_MAP)) {
+                    alertDialog.dismiss();
+                    return;
+                }
                 googleMapFrame.setVisibility(View.VISIBLE);
                 osmMap.setVisibility(View.INVISIBLE);
                 mapsforgeMapView.setVisibility(View.INVISIBLE);
+                clearMap();
                 currentMap = GOOGLE_MAP;
                 alertDialog.dismiss();
             }
@@ -558,9 +652,15 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         textView_OSM.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (Objects.equals(currentMap, OPEN_STREET_MAP)) {
+                    alertDialog.dismiss();
+                    return;
+                }
+                clearMap();
                 googleMapFrame.setVisibility(View.INVISIBLE);
                 osmMap.setVisibility(View.VISIBLE);
                 mapsforgeMapView.setVisibility(View.INVISIBLE);
+                clearMap();
                 currentMap = OPEN_STREET_MAP;
                 alertDialog.dismiss();
             }
@@ -568,10 +668,55 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
         textView_mapsforge.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
+                if (Objects.equals(currentMap, MAPSFORGE)) {
+                    alertDialog.dismiss();
+                    return;
+                }
+                clearMap();
                 googleMapFrame.setVisibility(View.INVISIBLE);
                 osmMap.setVisibility(View.INVISIBLE);
                 mapsforgeMapView.setVisibility(View.VISIBLE);
+                clearMap();
                 currentMap = MAPSFORGE;
+                alertDialog.dismiss();
+            }
+        });
+
+        textView_rudy.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (!Objects.equals(currentMap, GOOGLE_MAP)) {
+                    googleMapFrame.setVisibility(View.VISIBLE);
+                    osmMap.setVisibility(View.INVISIBLE);
+                    mapsforgeMapView.setVisibility(View.INVISIBLE);
+                    clearMap();
+                    currentMap = GOOGLE_MAP;
+                }
+                if (!Objects.equals(tileProvider, null)) {
+                    offlineOverlay.remove();
+                    tileProvider = null;
+                }
+                tileProvider = new OnlineTileProvider(RUDY_MAP);
+                offlineOverlay = mMap.addTileOverlay(new TileOverlayOptions().tileProvider(tileProvider).zIndex(0));
+                alertDialog.dismiss();
+            }
+        });
+        textView_wmts.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (!Objects.equals(currentMap, GOOGLE_MAP)) {
+                    googleMapFrame.setVisibility(View.VISIBLE);
+                    osmMap.setVisibility(View.INVISIBLE);
+                    mapsforgeMapView.setVisibility(View.INVISIBLE);
+                    clearMap();
+                    currentMap = GOOGLE_MAP;
+                }
+                if (!Objects.equals(tileProvider, null)) {
+                    offlineOverlay.remove();
+                    tileProvider = null;
+                }
+                tileProvider = new OnlineTileProvider(WMTS_MAP);
+                offlineOverlay = mMap.addTileOverlay(new TileOverlayOptions().tileProvider(tileProvider).zIndex(0));
                 alertDialog.dismiss();
             }
         });
@@ -580,23 +725,150 @@ public class MapsActivity extends FragmentActivity implements OnMapReadyCallback
     }
 
     //clear all marker and polyLine
-    private void clearMap(){
-        //clear osmMap marker and polyLine
-        osmMap.getOverlays().clear();
-        //add myLocation
-        osmMap.getOverlays().add(this.mLocationOverlay);
-        osmMap.removeAllViews();
-        //osmMap.getOverlays().remove(/*marker polyLine overlay*/)'
-
-        //clearMapsforge marker and polyLine
-        //0 is map, 1 is myLocation , delete to 2
-        for (int i = mapsforgeMapView.getLayerManager().getLayers().size() - 1; i > 1; i--) {
-            mapsforgeMapView.getLayerManager().getLayers().remove(mapsforgeMapView.getLayerManager().getLayers().get(i));
+    private void clearMap() {
+        switch (currentMap) {
+            case GOOGLE_MAP:
+                Log.d(TAG, "onClick: mapFragment is null?: " + Objects.equals(mapFragment, null));
+                if (Objects.equals(mapFragment, null)) {
+                    return;
+                }
+                mMap.clear();
+//                        getSupportFragmentManager().beginTransaction().remove(mapFragment).commit();
+//                        googleMapFrame.setVisibility(View.INVISIBLE);
+//                        Log.d(TAG, "onClick: mapFragment is null?: " + Objects.equals(mapFragment,null));
+                break;
+            case OPEN_STREET_MAP:
+                if (Objects.equals(osmMap, null)) {
+                    return;
+                }
+                osmMap.getTileProvider().clearTileCache();
+                osmMap.getOverlays().clear();
+                osmMap.getOverlays().add(mLocationOverlay);
+                osmMap.removeAllViews();
+//                        osmMap.getTileProvider().detach();
+//                        osmMap.onPause();
+//                        osmMap.onDetach();
+                break;
+            case MAPSFORGE:
+                if (Objects.equals(mapsforgeMapView, null)) {
+                    return;
+                }
+                tileCache.purge();
+                for (int i = mapsforgeMapView.getLayerManager().getLayers().size() - 1; i > 1; i--) {
+                    mapsforgeMapView.getLayerManager().getLayers().remove(mapsforgeMapView.getLayerManager().getLayers().get(i));
+                }
+                mapsforgeMapView.removeAllViews();
+                break;
         }
-        mapsforgeMapView.removeAllViews();
-//        mapsforgeMapView.getLayerManager().getLayers().remove(/*marker polyLine overlay*/);
+    }
 
-        //clear GoogleMap
-        mMap.clear();
+    private void addMarker() {
+        switch (currentMap) {
+            case GOOGLE_MAP:
+                //create GoogleMap marker
+                com.google.android.gms.maps.model.Marker gMarker = mMap.addMarker(new MarkerOptions()
+                        .position(new LatLng(currentLocation.getLatitude(), currentLocation.getLongitude())));
+                break;
+            case OPEN_STREET_MAP:
+                //create osmMap marker
+
+                org.osmdroid.views.overlay.Marker osmMarker = new org.osmdroid.views.overlay.Marker(osmMap);
+                osmMarker.setPosition(new GeoPoint(currentLocation.getLatitude(), currentLocation.getLongitude()));
+                osmMarker.setAnchor(org.osmdroid.views.overlay.Marker.ANCHOR_CENTER, org.osmdroid.views.overlay.Marker.ANCHOR_BOTTOM);
+//                osmMarker.setTitle(locationName);
+//                osmMarker.setSnippet(lat + " , " + lng);
+                osmMap.getOverlays().add(osmMarker);
+                break;
+            case MAPSFORGE:
+                //create mapsforge marker
+                if (Objects.equals(mapsforgeBitmap, null)) {
+                    Drawable icon = ContextCompat.getDrawable(MapsActivity.this, R.drawable.ic_location_black_24dp);
+                    DrawableCompat.setTint(icon, ContextCompat.getColor(MapsActivity.this, android.R.color.holo_red_dark));
+                    mapsforgeBitmap = AndroidGraphicFactory.convertToBitmap(icon);
+                    mapsforgeBitmap.incrementRefCount();
+                }
+                Marker marker = new Marker(new LatLong(25.026231, 121.531847), mapsforgeBitmap, 0, -mapsforgeBitmap.getHeight() / 2) {
+                    @Override
+                    public boolean onTap(LatLong geoPoint, Point viewPosition, Point tapPoint) {
+                        if (contains(viewPosition, tapPoint)) {
+                            Toast.makeText(MapsActivity.this,
+                                    "The Marker was tapped " + geoPoint.toString(),
+                                    Toast.LENGTH_SHORT).show();
+                            return true;
+                        }
+                        return false;
+                    }
+                };
+                break;
+        }
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        Log.d(TAG, "onActivityResult: ");
+        if (resultCode == RESULT_OK) {
+            if (requestCode == 1111) {
+//                final List<LatLng> latLngList = data.getParcelableArrayListExtra("LAT_LNG_LIST");
+//                final boolean[] zoomLevels = data.getBooleanArrayExtra("ZOOM_LEVEL_LIST");
+//                final String mapName = data.getStringExtra("OFFLINE_MAP_NAME");
+//                int mapType = data.getIntExtra("MAP_TYPE", -1);
+//                Completable.fromAction(new Action() {
+//                    @Override
+//                    public void run() throws Exception {
+//                        List<Integer> zoomList = new ArrayList<>();
+////                        zoomList.add(16);
+//                        for (int i = 0 ; i < zoomLevels.length; i++){
+//                            if (zoomLevels[i]) {
+//                                zoomList.add(i);
+//                            }
+//                        }
+//                        GoogleMapOfflineFileController.saveTileRegionFile(mapName /*"TEST_MAP"*/, GoogleMapOfflineFileController.getTileRegion(latLngList, zoomList), mapType);
+//                    }
+//                }).subscribeOn(Schedulers.newThread())
+//                        .observeOn(AndroidSchedulers.mainThread())
+//                        .andThen(Completable.fromAction(new Action() {
+//                            @Override
+//                            public void run() throws Exception {
+//                                GoogleMapOfflineTileProvider tileProvider = new GoogleMapOfflineTileProvider(mapName /*"TEST_MAP"*/);
+//                                TileOverlay offlineOverlay = mMap.addTileOverlay(new TileOverlayOptions().tileProvider(tileProvider).zIndex(0));
+//                            }
+//                        }))
+//                        .subscribe();
+            } else if (requestCode == 1234) {
+                String mapName = data.getStringExtra("OFFLINE_MAP_FILE_NAME");
+                int mapType = data.getIntExtra("MAP_TYPE", -1);
+                if (!Objects.equals(tileProvider, null)) {
+                    offlineOverlay.remove();
+                    tileProvider = null;
+                }
+                    tileProvider = new OfflineTileProvider(mapName , mapType);
+                    offlineOverlay = mMap.addTileOverlay(new TileOverlayOptions().tileProvider(tileProvider).zIndex(0));
+                    if (currentMap != GOOGLE_MAP){
+                        currentMap = GOOGLE_MAP;
+                        mapFragment.getView().setVisibility(View.VISIBLE);
+                        osmMap.setVisibility(View.INVISIBLE);
+                        mapsforgeMapView.setVisibility(View.INVISIBLE);
+                    }
+//                if (mapType == GOOGLE_MAP) {
+//                    tileProvider = new GoogleMapOfflineTileProvider(mapName /*"TEST_MAP"*/);
+//                    offlineOverlay = mMap.addTileOverlay(new TileOverlayOptions().tileProvider(tileProvider).zIndex(0));
+//                    if (currentMap != GOOGLE_MAP){
+//                        currentMap = GOOGLE_MAP;
+//                        mapFragment.getView().setVisibility(View.VISIBLE);
+//                        osmMap.setVisibility(View.INVISIBLE);
+//                    }
+//                } else if (mapType == OPEN_STREET_MAP) {
+//                    ITileSource tileSource = new OfflineMapTileSource(mapName, 2, 19, 256, ".png",
+//                            new String[]{"http://b.tile.openstreetmap.fr/osmfr/"});
+//                    osmMap.setTileSource(tileSource);
+//                    if (currentMap != OPEN_STREET_MAP){
+//                        currentMap = OPEN_STREET_MAP;
+//                        osmMap.setVisibility(View.VISIBLE);
+//                        mapFragment.getView().setVisibility(View.INVISIBLE);
+//                    }
+//                }
+            }
+        }
     }
 }

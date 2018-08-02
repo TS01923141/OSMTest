@@ -6,6 +6,7 @@
     android:padding="8dp">
 
     <TextView
+        android:id="@+id/textView_onlineMap"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="線上" />
@@ -29,8 +30,27 @@
         android:text="Open Street Map"
         android:textColor="@android:color/black"
         android:textSize="24sp" />
+    <TextView
+        android:id="@+id/textView_rudy"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="8dp"
+        android:text="魯地圖"
+        android:textColor="@android:color/black"
+        android:textSize="24sp" />
+    <TextView
+        android:id="@+id/textView_wmts"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:padding="8dp"
+        android:text="經建三"
+        android:textColor="@android:color/black"
+        android:textSize="24sp" />
 
     <TextView
+        android:id="@+id/textView_offlineMap"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="離線" />
