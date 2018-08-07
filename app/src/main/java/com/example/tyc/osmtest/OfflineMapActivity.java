@@ -9,7 +9,6 @@ import android.util.Log;
 import android.view.View;
 
 import com.example.tyc.osmtest.data.OfflineMapData;
-import com.example.tyc.osmtest.utils.AlertProgressDialog;
 import com.example.tyc.osmtest.utils.GoogleMapOfflineFileController;
 import com.google.android.gms.maps.model.LatLng;
 

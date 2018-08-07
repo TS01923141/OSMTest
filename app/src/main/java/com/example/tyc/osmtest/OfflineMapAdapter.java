@@ -16,8 +16,6 @@ import com.example.tyc.osmtest.data.OfflineMapData;
 import com.example.tyc.osmtest.utils.AlertProgressDialog;
 import com.example.tyc.osmtest.utils.GoogleMapOfflineFileController;
 
-import org.w3c.dom.Text;
-
 import java.io.File;
 import java.util.List;
 
